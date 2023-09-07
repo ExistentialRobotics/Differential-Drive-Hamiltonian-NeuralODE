@@ -1,0 +1,246 @@
+<?xml version="1.0" ?>
+<robot name="City">
+  <link name="post_office__link">
+    <inertial>
+      <mass value="0"/>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+    <collision name="post_office__collision">
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="gazebo_models/post_office/post_office.dae" scale="1.0 1.0 1.0"/>
+      </geometry>
+    </collision>
+    <visual name="post_office__visual">
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="gazebo_models/post_office/post_office.dae" scale="1.0 1.0 1.0"/>
+      </geometry>
+    </visual>
+  </link>
+  <link name="Gas Station__link">
+    <inertial>
+      <mass value="0"/>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+    <collision name="Gas Station__collision">
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="gazebo_models/gas_station/gas_station.dae" scale="1.0 1.0 1.0"/>
+      </geometry>
+    </collision>
+    <visual name="Gas Station__visual">
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="gazebo_models/gas_station/gas_station.dae" scale="1.0 1.0 1.0"/>
+      </geometry>
+    </visual>
+  </link>
+  <joint name="post_gas" type="fixed">
+    <origin xyz="50 -5 0" rpy="0 0 0"/>
+    <parent link="post_office__link"/>
+    <child link="Gas Station__link"/>
+  </joint>
+
+  <link name="house_link_1">
+    <inertial>
+      <mass value="0"/>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+    <collision name="house_collision">
+      <origin rpy="0 0 -0" xyz="0 0 1.57"/>
+      <geometry>
+        <mesh filename="gazebo_models/house/collapsed_house.dae" scale="1.0 1.0 1.0"/>
+      </geometry>
+    </collision>
+    <visual name="house_visual">
+      <origin rpy="0 0 -0" xyz="0 0 1.57"/>
+      <geometry>
+        <mesh filename="gazebo_models/house/collapsed_house.dae" scale="1.0 1.0 1.0"/>
+      </geometry>
+    </visual>
+  </link>
+  <joint name="house_joint" type="fixed">
+    <origin xyz="10 15 -2"/>
+    <parent link="post_office__link"/>
+    <child link="house_link_1"/>
+  </joint>
+
+  <link name="house_link_2">
+    <inertial>
+      <mass value="0"/>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+    <collision name="house_collision">
+      <origin rpy="0 0 -0" xyz="0 0 1.57"/>
+      <geometry>
+        <mesh filename="gazebo_models/house/collapsed_house.dae" scale="1.0 1.0 1.0"/>
+      </geometry>
+    </collision>
+    <visual name="house_visual">
+      <origin rpy="0 0 -0" xyz="0 0 1.57"/>
+      <geometry>
+        <mesh filename="gazebo_models/house/collapsed_house.dae" scale="1.0 1.0 1.0"/>
+      </geometry>
+    </visual>
+  </link>
+  <joint name="house_joint_2" type="fixed">
+    <origin xyz="40 15 -2"/>
+    <parent link="post_office__link"/>
+    <child link="house_link_2"/>
+  </joint>
+
+  <link name="fast_food_link_1">
+    <inertial>
+      <mass value="0"/>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+    <collision name="fast_food_collision">
+      <origin rpy="0 0 0" xyz="0 0 1.57"/>
+      <geometry>
+        <mesh filename="gazebo_models/fast_food/meshes/fast_food.dae" scale="1.0 1.0 1.0"/>
+      </geometry>
+    </collision>
+    <visual name="fast_food_visual">
+      <origin rpy="0 0 0" xyz="0 0 1.57"/>
+      <geometry>
+        <mesh filename="gazebo_models/fast_food/meshes/fast_food.dae" scale="1.0 1.0 1.0"/>
+      </geometry>
+    </visual>
+  </link>
+  <joint name="fast_food_joint" type="fixed">
+    <origin xyz="15 -10 0" rpy="0 0 0.0"/>
+    <parent link="post_office__link"/>
+    <child link="fast_food_link_1"/>
+  </joint>
+
+  <link name="speed_limit">
+    <inertial>
+      <mass value="0"/>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+    <collision name="speed_limit_collision">
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="gazebo_models/speed_limit_sign/meshes/speed_limit_sign.dae" scale="5.0 5.0 5.0"/>
+      </geometry>
+    </collision>
+    <visual name="stop_light_visual">
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="gazebo_models/speed_limit_sign/meshes/speed_limit_sign.dae" scale="5.0 5.0 5.0"/>
+      </geometry>
+    </visual>
+  </link>
+  <joint name="speed_limit_joint" type="fixed">
+    <origin xyz="25 0 0" rpy="0 0 1.57"/>
+    <parent link="post_office__link"/>
+    <child link="speed_limit"/>
+  </joint>
+
+  <link name="fountain">
+    <inertial>
+      <mass value="0"/>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+    <collision name="speed_limit_collision">
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="gazebo_models/fountain/meshes/fountain.dae" scale="1.0 1.0 1.0"/>
+      </geometry>
+    </collision>
+    <visual name="stop_light_visual">
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="gazebo_models/fountain/meshes/fountain.dae" scale="1.0 1.0 1.0"/>
+      </geometry>
+    </visual>
+  </link>
+  <joint name="fountain_joint" type="fixed">
+    <origin xyz="40 5 0" rpy="0 0 1.57"/>
+    <parent link="post_office__link"/>
+    <child link="fountain"/>
+  </joint>
+
+  <link name="mailbox">
+    <inertial>
+      <mass value="0"/>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+    <collision name="mailbox_collision">
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="gazebo_models/mailbox/meshes/mailbox.dae" scale="1.0 1.0 1.0"/>
+      </geometry>
+    </collision>
+    <visual name="stop_light_visual">
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="gazebo_models/mailbox/meshes/mailbox.dae" scale="1.0 1.0 1.0"/>
+      </geometry>
+    </visual>
+  </link>
+  <joint name="mailbox_joint" type="fixed">
+    <origin xyz="25 10 0" rpy="0 0 1.57"/>
+    <parent link="post_office__link"/>
+    <child link="mailbox"/>
+  </joint>
+
+  <link name="cafe">
+    <inertial>
+      <mass value="0"/>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+    <collision name="cafe_collision">
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="gazebo_models/cafe/meshes/cafe.dae" scale="0.50 0.50 0.50"/>
+      </geometry>
+    </collision>
+    <visual name="stop_light_visual">
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="gazebo_models/cafe/meshes/cafe.dae" scale="0.50 0.50 0.50"/>
+      </geometry>
+    </visual>
+  </link>
+  <joint name="cafe_joint" type="fixed">
+    <origin xyz="50 10 0" rpy="0 0 0"/>
+    <parent link="post_office__link"/>
+    <child link="cafe"/>
+  </joint>
+
+    <link name="apartment">
+    <inertial>
+      <mass value="0"/>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+    <collision name="apartment_collision">
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="gazebo_models/apartment/meshes/apartment.dae" scale="0.50 0.50 0.50"/>
+      </geometry>
+    </collision>
+    <visual name="bus_visual">
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="gazebo_models/apartment/meshes/apartment.dae" scale="0.50 0.50 0.50"/>
+      </geometry>
+    </visual>
+  </link>
+  <joint name="apartment_joint" type="fixed">
+    <origin xyz="30 -5 0" rpy="0 0 3.14"/>
+    <parent link="post_office__link"/>
+    <child link="apartment"/>
+  </joint>
+</robot>

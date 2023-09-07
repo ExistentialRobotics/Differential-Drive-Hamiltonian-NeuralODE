@@ -1,0 +1,46 @@
+<?xml version="1.0" ?>
+<robot name="City">
+  <link name="post_office__link">
+    <inertial>
+      <mass value="0"/>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+    <collision name="post_office__collision">
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="gazebo_models/post_office/post_office.dae" scale="1.0 1.0 1.0"/>
+      </geometry>
+    </collision>
+    <visual name="post_office__visual">
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="gazebo_models/post_office/post_office.dae" scale="1.0 1.0 1.0"/>
+      </geometry>
+    </visual>
+  </link>
+  <link name="Gas Station__link">
+    <inertial>
+      <mass value="0"/>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+    <collision name="Gas Station__collision">
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="gazebo_models/gas_station/gas_station.dae" scale="1.0 1.0 1.0"/>
+      </geometry>
+    </collision>
+    <visual name="Gas Station__visual">
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="gazebo_models/gas_station/gas_station.dae" scale="1.0 1.0 1.0"/>
+      </geometry>
+    </visual>
+  </link>
+  <joint name="post_gas" type="fixed">
+    <origin xyz="50 -5 0" rpy="0 0 0"/>
+    <parent link="post_office__link"/>
+    <child link="Gas Station__link"/>
+  </joint>
+</robot>
