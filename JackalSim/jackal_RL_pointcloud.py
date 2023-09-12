@@ -15,7 +15,9 @@ import copy
 from collections import defaultdict
 from tqdm import tqdm
 from energy_based_new_lyapunov import EnergyBasedController
-
+import open3d
+vis = open3d.visualization.Visualizer()
+vis.create_window(visible = False)
 
 def create_jackal_ackerman(scene: sapien.Scene,
                            body_size=(0.5, 0.5, 0.25),
@@ -247,8 +249,8 @@ class JackalEnv(SapienEnv):
         loader.fix_root_link = True
         self._scene.add_ground(0.0)
         self.jackal = create_jackal_ackerman(self._scene)
-        self.jackal.set_pose(sapien.Pose([15, 0, 0.22], [1, 0, 0, 0]))
-        city = loader.load('assets/gas.urdf')
+        self.jackal.set_pose(sapien.Pose([15, 10, 0.22], [1, 0, 0, 0]))
+        city = loader.load('assets/demo.urdf')
         city.set_root_pose(sapien.Pose([0, 0, 0], [1, 0, 0, 0]))
         near, far = 0.1, 50
         width, height = 640, 480
@@ -366,13 +368,17 @@ class JackalEnv(SapienEnv):
                         fill_value=np.array([tauL, tauR]).reshape((1, 2))
                     ), axis=1
                 )
-                np.save(
-                    "../ModelTraining/jackal/data/PointClouds/{:06}.npy".format(
-                        num_controls * samples_per_control * i + samples_per_control * j + s
-                    ),
-                    points_world
-                )
+                # np.save(
+                #     "../ModelTraining/jackal/data/PointClouds/{:06}.npy".format(
+                #         num_controls * samples_per_control * i + samples_per_control * j + s
+                #     ),
+                #     points_world
+                # )
 
+                point_cloud = open3d.geometry.PointCloud()
+                point_cloud.points = open3d.utility.Vector3dVector(np.array(points_world[:, :3]).reshape([-1, 3]))
+                #
+                open3d.visualization.draw_geometries([point_cloud])
                 self.jackal.set_qf(torques)
                 self._scene.step()
                 self._scene.update_render()
@@ -391,7 +397,7 @@ class JackalEnv(SapienEnv):
         return mass, inertial
 
     def reset(self):
-        p_mean = np.array([15, 0, 0.175])
+        p_mean = np.array([15, -3, 0.175])
         theta_mean = 0
         p = np.zeros(3)
         p[:2] = np.random.normal(0, 1, 1) + p_mean[:2]
@@ -415,9 +421,13 @@ def get_dataset(test_split=0.5, save_dir=None, generate=True, **kwargs):
         print("Successfully loaded data from {}".format(path_SE3))
     else:
         print("Had a problem loading data from {}. Rebuilding dataset...".format(path_SE3))
-        waypoints_x = np.array([13, 14, 16, 17])
-        waypoints_y = np.array([-1, 1])
-        waypoints_theta = np.array([-np.pi/3, -np.pi/6, np.pi/6, np.pi/3])
+        # waypoints_x = np.array([13, 14, 16, 17])
+        # waypoints_y = np.array([-1, 1])
+        # waypoints_theta = np.array([-np.pi/3, -np.pi/6, np.pi/6, np.pi/3])
+
+        waypoints_x = np.array([15])
+        waypoints_y = np.array([-3])
+        waypoints_theta = np.array([0])
 
         setPoints = list(it.product(waypoints_x, waypoints_y, waypoints_theta))
         num_trajectories = len(setPoints)

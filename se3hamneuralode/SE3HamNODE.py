@@ -30,13 +30,13 @@ class SE3HamNODE(torch.nn.Module):
         if M_net1 is None and self.M1_known == False:
             print("Creating M1 net")
             # This works
-            self.M_net1 = PSDMass(self.xdim, 20, self.linveldim, init_gain=init_gain).to(device)
+            self.M_net1 = PSDMass(self.xdim, 60, self.linveldim, init_gain=init_gain).to(device)
         else:
             self.M_net1 = M_net1
         if M_net2 is None and self.M2_known == False:
             print("Creating M2 net")
             # This works
-            self.M_net2 = PSDInertial(self.Rdim, 10, self.twistdim - self.linveldim, init_gain=init_gain).to(device)
+            self.M_net2 = PSDInertial(self.Rdim, 30, self.twistdim - self.linveldim, init_gain=init_gain).to(device)
         else:
             self.M_net2 = M_net2
         if V_net is None:
@@ -45,10 +45,14 @@ class SE3HamNODE(torch.nn.Module):
             self.V_net = V_net
         if g_net is None:
             # This works
-            self.g_net = MatrixNet(self.posedim, 10, self.twistdim * self.udim, shape=(self.twistdim, self.udim),
+            self.g_net = MatrixNet(self.posedim, 50, self.twistdim * self.udim, shape=(self.twistdim, self.udim),
                                    init_gain=init_gain).to(device)
         else:
             self.g_net = g_net
+        self.D_net = PSDInertial(
+            input_dim=self.posedim + self.linveldim + self.angveldim, hidden_dim=40,
+            diag_dim=self.linveldim + self.angveldim, init_gain=init_gain
+        ).to(device)
         self.device = device
         self.nfe = 0
         if pretrain:
@@ -235,7 +239,8 @@ class SE3HamNODE(torch.nn.Module):
                 M_q_inv2 = M_q_inv2.repeat(q.shape[0], 1, 1).to(self.device)
             V_q = 0
             g_q = self.g_net(q)
-
+            D_qp = self.D_net(q_p)
+            # print(f"dissipation output : {D_qp.shape}")
             # Calculate the Hamiltonian
             p_aug_v = torch.unsqueeze(pv, dim=2)
             p_aug_w = torch.unsqueeze(pw, dim=2)
@@ -266,14 +271,15 @@ class SE3HamNODE(torch.nn.Module):
             dR = torch.cat((dR03, dR36, dR69), dim=1)
             dpv = torch.cross(pv, dHdpw) \
                   - torch.squeeze(torch.matmul(torch.transpose(Rmat, 1, 2), torch.unsqueeze(dHdx, dim=2))) \
-                  + F[:, 0:3]
+                  + F[:, 0:3] - torch.squeeze(torch.matmul(D_qp[:, :3, :3], torch.unsqueeze(dHdpv, dim=2)))
             dpw = torch.cross(pw, dHdpw) \
                   + torch.cross(pv, dHdpv) \
                   + torch.cross(Rmat[:, 0, :], dHdR[:, 0:3]) \
                   + torch.cross(Rmat[:, 1, :], dHdR[:, 3:6]) \
                   + torch.cross(Rmat[:, 2, :], dHdR[:, 6:9]) \
-                  + F[:, 3:6]
+                  + F[:, 3:6] - torch.squeeze(torch.matmul(D_qp[:, 3:, 3:], torch.unsqueeze(dHdpw, dim=2)))
             # Hamilton's equation on SE(3) manifold for twist xi
+
             dM_inv_dt1 = torch.zeros_like(M_q_inv1)
             if self.M1_known == False:
                 for row_ind in range(self.linveldim):

@@ -27,11 +27,6 @@ class EnergyBasedController:
     """
 
     def __init__(self, M1_known: bool = False, M2_known: bool = False, maxTorque: float =2, Kp = None, Kv = None, KR1 = None, KR2 = None, Kw = None, checkpoint=-1):
-        # Kp = 10.0 * np.diag([5, 5, 25])
-        # Kv = 10.0 * np.diag([2.5, 2.5, 2.5])
-        # KR1 = 0.01 * np.diag([250, 250, 250])
-        # KR2 = 0.01 * np.diag([250, 250, 250])
-        # Kw = 3 * np.diag([2, 2, 2])
         checkpoint = '' if checkpoint == -1 else ('-' + str(checkpoint))
         self.M1_known = M1_known
         self.M2_known = M2_known
@@ -45,7 +40,7 @@ class EnergyBasedController:
         self.udim = 2
         self.vehicle_width = 0.50
         self.wheel_radius = 0.1
-        self.model = self.get_model(mode='SE3', checkpoint=checkpoint)
+        self.model = self.get_model(checkpoint=checkpoint)
 
         # Parameters
         if self.M1_known:
@@ -61,6 +56,7 @@ class EnergyBasedController:
             self.Inet = self.model.M_net2
 
         self.gnet = self.model.g_net
+        self.Dnet = self.model.D_net
         self.maxTorque = maxTorque
 
         self.wheel_radius2 = self.wheel_radius * self.wheel_radius
@@ -100,61 +96,34 @@ class EnergyBasedController:
         self.e3 = np.array([0, 0, 1]).reshape(3, 1)
         self.J = np.array([[0, -1, 0], [1, 0, 0], [0, 0, 1]])
 
-        P_GAIN = 10
-        G_GAIN = 0.25
-        R_GAIN = 0.5
-        if Kp is None:
-            self.Kp = P_GAIN * np.diag([1, 1, 1])
-        else:
-            self.Kp = Kp
-        if Kv is None:
-            self.Kv = P_GAIN * 5 * np.diag([1, 1, 1])
-        else:
-            self.Kv = Kv
-        if KR1 is None:
-            self.KR1 = G_GAIN * np.diag([1, 1, 1])
-        else:
-            self.KR1 = KR1
-        if KR2 is None:
-            self.KR2 = R_GAIN * np.diag([1, 1, 1])
-        else:
-            self.KR2 = KR2
-        if Kw is None:
-            self.Kw = 1 * R_GAIN * np.diag([1, 1, 1])
-        else:
-            self.Kw = Kw
+        self.kp = 1.2
+        self.kv = self.kp
+        self.kr1 = 7
+        self.kr2 = 3
+        self.kw = 1
 
-        self.kp = 5
-        self.kv = self.kp * 5
-        self.kr1 = 1.75
-        self.kr2 = 1.5
-        self.kw = .4
+        self.Kp = self.kp * np.diag([1, 1, 1])
+        self.Kv = self.kv * np.diag([1, 1, 1])
+        self.KR1 = self.kr1 * np.diag([1, 1, 1])
+        self.KR2 = self.kr2 * np.diag([1, 1, 1])
+        self.Kw = self.kw * np.diag([1, 1, 1])
 
-    def get_model(self, mode, checkpoint=''):
-        if mode == 'SE2':
-            M1_known = bool(self.args.M1_known)
-            useD = bool(self.args.useD)
-            model = SE2HamNODE(device=device, M1=self.args.M1, M2=self.args.M2, V=self.args.V, g=self.args.g,
-                               D=self.args.D, udim=2, pretrain=False, M1_known=M1_known, useD=useD).to(device)
-            path = f'{THIS_DIR}/{self.folder}/jackal-se2ham-rk4-5p-M1known{M1_known}-useD{useD}-it{self.args.ckpt}.tar'
-            # path = f'{THIS_DIR}/jackal-se2ham-rk4-5p-M1knownFalse-it{2000}.tar'
-            model.load_state_dict(torch.load(path, map_location=device))
+    def get_model(self, checkpoint=''):
 
+        model = SE3HamNODE(device=device, udim=2,
+                           pretrain=False, M1_known=self.M1_known,
+                           M2_known=self.M2_known
+                           ).to(device)
+        # saved = "trained model unknown M1 M2"
+        saved = ""
+        using_pointcloud = True
+        checkpoint = checkpoint
+        if using_pointcloud:
+            path = f'{THIS_DIR}/PointCloudTrainedModels/jackal-se3ham_pointclouds-rk4-5p' + checkpoint + '.tar'
         else:
-            model = SE3HamNODE(device=device, udim=2,
-                               pretrain=False, M1_known=self.M1_known,
-                               M2_known=self.M2_known
-                               ).to(device)
-            # saved = "trained model unknown M1 M2"
-            saved = ""
-            using_pointcloud = True
-            checkpoint = checkpoint
-            if using_pointcloud:
-                path = f'{THIS_DIR}/PointCloudTrainedModels/jackal-se3ham_pointclouds-rk4-5p' + checkpoint + '.tar'
-            else:
-                path = f'{THIS_DIR}/{saved}jackal-se3ham-rk4-5p' + checkpoint + '.tar'
-            print(path)
-            model.load_state_dict(torch.load(path, map_location=device))
+            path = f'{THIS_DIR}/{saved}jackal-se3ham-rk4-5p' + checkpoint + '.tar'
+        print(path)
+        model.load_state_dict(torch.load(path, map_location=device))
 
         return model
 
@@ -180,115 +149,7 @@ class EnergyBasedController:
         arr_out[2] = -R[0, 1]
         return arr_out
 
-    def get_control_backstepping(self, currentState, targetState):
-        """
-        currentState: (18,)-shaped array containing current position, orientation, velocity, angular velocity.
-        targetState: (18,)-shaped array containing target position,
-                            target orientation, target velocity, target angular velocity
-        """
 
-        done = False
-        pos, Rvec, vel, angvel = np.split(np.expand_dims(currentState, axis=1),
-                                          [self.posdim, self.posdim + self.Rdim,
-                                           self.posdim + self.Rdim + self.linveldim],
-                                          axis=0)
-        R = Rvec.reshape((3, 3))
-
-        pos_des, Rvec_des, vel_des, angvel_des = np.split(np.expand_dims(targetState, axis=1),
-                                                          [self.posdim, self.posdim + self.Rdim,
-                                                           self.posdim + self.Rdim + self.linveldim], axis=0)
-        R_des = Rvec_des.reshape((3, 3))
-        acc_des = np.array([0, 0, 0]).reshape((3, 1))
-        angacc_des = np.array([0, 0, 0]).reshape((3, 1))
-        q = np.concatenate((pos[:3].reshape(-1, ), R.flatten()))
-        q = torch.tensor(q, requires_grad=True, dtype=torch.float32).to(device)
-        q = q.view(1, 12)
-        xtensor, Rtensor = torch.split(q, [3, 9], dim=1)
-
-        g_q = self.gnet(q).detach().cpu().numpy()[0]
-        g_q[1:5] = 0
-        print(f"g matrix : {g_q}")
-        g_matrix_dagger = np.linalg.inv(g_q.T @ g_q) @ g_q.T
-        # g_matrix_dagger[:, 1:5] = 0
-        # g_matrix_dagger[1, 0] = g_matrix_dagger[0, 0]
-        # g_matrix_dagger[1, -1] = -g_matrix_dagger[0, -1]
-        pos_e = pos - pos_des
-        Re = R_des.T @ R
-
-        qe = np.concatenate((pos_e[:3].reshape(-1, ), Re.flatten()))
-        qe = torch.tensor(qe, requires_grad=True, dtype=torch.float32).to(device)
-        qe = qe.view(1, 12)
-        xetensor, Retensor = torch.split(qe, [3, 9], dim=1)
-
-        if not self.M1_known:
-            # print(self.Mnet(xtensor).detach().cpu().numpy())
-            self.M = np.linalg.inv(self.Mnet(xtensor).detach().cpu().numpy()[0])
-        if not self.M2_known:
-            # print(self.Inet(Rtensor).detach().cpu().numpy())
-            self.Inertia = np.linalg.inv(self.Inet(Rtensor).detach().cpu().numpy()[0])
-        # print(f"mass : {self.M}\nInertial matrix : {self.Inertia}")
-        alpha = 2.5
-        Kp = alpha * 5 * self.M
-        Kv = alpha * 2.5 * self.M
-        KR1 = alpha * 6 * self.Inertia
-        KR2 = alpha * 6 * self.Inertia
-        Kw = alpha * 3 * self.Inertia
-
-        # Current State
-        pv = self.M @ vel
-        pw = self.Inertia @ angvel
-
-        # Matrices
-        pos_e = (pos - pos_des)
-        Re = R_des.T @ R
-        yaw_error = mat2euler(Re)[-1]
-        yaw_error = yaw_error
-        pos_e_norm = np.linalg.norm(np.squeeze(pos_e))
-        # print(f"pos error : {pos_e_norm} || yaw error : {yaw_error}")
-        if pos_e_norm < 0.1 and np.abs(yaw_error) < 0.1:
-            print(f"Reached close to goal")
-            print(f"Distance error : {pos_e_norm} || yaw error : {yaw_error}")
-            self.compare_with_ground_truth_g_matrix(learnt_g=g_q)
-            return np.array([0, 0]), True
-
-        Rpe = np.array([[pos_e[0, 0] / pos_e_norm, -pos_e[1, 0] / pos_e_norm, 0],
-                        [pos_e[1, 0] / pos_e_norm, pos_e[0, 0] / pos_e_norm, 0],
-                        [0, 0, 1]])
-        P = np.array([[(pos_e_norm ** 2 - pos_e[0, 0] ** 2) / pos_e_norm ** 3,
-                       -(pos_e[0, 0] * pos_e[1, 0]) / pos_e_norm ** 3, 0, (pos_e[0, 0] * pos_e[1, 0]) / pos_e_norm ** 3,
-                       (-pos_e_norm ** 2 + pos_e[1, 0] ** 2) / pos_e_norm ** 3, 0, 0, 0, 0],
-                      [-(pos_e[0, 0] * pos_e[1, 0]) / pos_e_norm ** 3,
-                       (pos_e_norm ** 2 - pos_e[1, 0] ** 2) / pos_e_norm ** 3, 0,
-                       (pos_e_norm ** 2 - pos_e[0, 0] ** 2) / pos_e_norm ** 3,
-                       -(pos_e[0, 0] * pos_e[1, 0]) / pos_e_norm ** 3, 0, 0, 0, 0],
-                      [0, 0, 0, 0, 0, 0, 0, 0, 0]])
-        Q1 = np.array(
-            [[1, 0, 0], [0, 0, 0], [0, 0, 0], [0, 1, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]])
-        Q2 = np.array(
-            [[0, 0, 0], [1, 0, 0], [0, 0, 0], [0, 0, 0], [0, 1, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]])
-        # Calculate
-        term1 = np.array([0.5 * np.trace(KR1 @ R_des.T @ P @ Q1) + 0.5 * np.trace(KR2.T @ R.T @ P @ Q1),
-                          0.5 * np.trace(KR1 @ R_des.T @ P @ Q2) + 0.5 * np.trace(KR2.T @ R.T @ P @ Q2),
-                          0]).reshape((3, 1))
-        dHdpe = Kp @ pos_e - term1
-        # print(f"dHdpe : {dHdpe}")
-        e_euler = 0.5 * vee_map(KR2 @ Rpe.T @ R_des @ Re - Re.T @ R_des.T @ Rpe @ KR2.T).reshape((3, 1))
-        # print(f"e_euler : {e_euler}")
-        bv = -R.T @ dHdpe - Kv @ (vel - R.T @ vel_des) - hat_map(np.squeeze(pv)) @ angvel + self.M @ (
-                R.T @ acc_des - hat_map(np.squeeze(angvel)) @ R.T @ vel_des)
-        bw = - e_euler - Kw @ (angvel - R.T @ R_des @ angvel_des) - hat_map(
-            np.squeeze(pv)) @ vel - hat_map(np.squeeze(pw)) @ angvel + self.Inertia @ (
-                     R.T @ R_des @ angacc_des - hat_map(np.squeeze(angvel)) @ R.T @ R_des @ angvel_des)
-
-        wrench = np.hstack((np.squeeze(bv), np.squeeze(bw)))
-        u = g_matrix_dagger @ wrench
-        u1 = u[0]
-        u2 = u[1]
-        tau_L = u1
-        tau_R = u2
-        u = np.array([tau_L, tau_R])
-        u = np.clip(u, -self.maxTorque, self.maxTorque)
-        return u, done
 
     def get_control_new(self, currentState, targetState):
         """
@@ -313,7 +174,9 @@ class EnergyBasedController:
         q = torch.tensor(q, requires_grad=True, dtype=torch.float32).to(device)
         q = q.view(1, 12)
         xtensor, Rtensor = torch.split(q, [3, 9], dim=1)
-
+        v = torch.tensor(vel, requires_grad=True, dtype=torch.float32).to(device).view(1, 3)
+        omega = torch.tensor(angvel, requires_grad=True, dtype=torch.float32).to(device).view(1, 3)
+        qp = torch.cat((q, v, omega), dim=1)
         g_q = self.gnet(q).detach().cpu().numpy()[0]
         g_q[1:5] = 0
         print(f"g matrix : {g_q}")
@@ -333,6 +196,9 @@ class EnergyBasedController:
             self.M = np.linalg.inv(self.Mnet(xtensor).detach().cpu().numpy()[0])
         if not self.M2_known:
             self.Inertia = np.linalg.inv(self.Inet(Rtensor).detach().cpu().numpy()[0])
+        D = self.Dnet(qp).detach().cpu().numpy()[0]
+        Dv = D[:3, :3]
+        Dw = D[3:, 3:]
         print(f"mass : {self.M} \nInertial: {self.Inertia}")
 
         # Current State
@@ -343,7 +209,7 @@ class EnergyBasedController:
         yaw_error = yaw_error
         pos_e_norm = np.linalg.norm(np.squeeze(pos_e))
         print("position error : {:.3f} || yaw error : {:.3f}".format(pos_e_norm, yaw_error))
-        if pos_e_norm < 0.10 and np.abs(yaw_error) < 0.10:
+        if pos_e_norm < 0.1 and np.abs(yaw_error) < 0.1:
             done = True
             self.compare_with_ground_truth_g_matrix(learnt_g=g_q)
             print(f"Reached close to goal")
@@ -401,22 +267,22 @@ class EnergyBasedController:
 
         dHdRe = -.5 * self.kr1 * TkR1 * R_des.T @ Rd2.T @ Rpe @ Rd - .5 * self.kr2 * (R_des.T @ Rd2.T @ Rpe)
 
-        e_euler = 0.25 * self.vee_map(
-            TkR1 * (Rd.T @ Rpe.T @ Rd2 @ R_des @ Re) - (Re.T @ R_des.T @ Rd2.T @ Rpe @ Rd) * TkR1
-        ).reshape(3, 1) + 0.5 * self.vee_map(
-            self.kr2 * (Rpe.T @ Rd2 @ R_des @ Re) - (Re.T @ R_des.T @ Rd2.T @ Rpe) * self.kr2
-        ).reshape(3, 1)
+        # e_euler = 0.25 * self.vee_map(
+        #     TkR1 * (Rd.T @ Rpe.T @ Rd2 @ R_des @ Re) - (Re.T @ R_des.T @ Rd2.T @ Rpe @ Rd) * TkR1
+        # ).reshape(3, 1) + 0.5 * self.vee_map(
+        #     self.kr2 * (Rpe.T @ Rd2 @ R_des @ Re) - (Re.T @ R_des.T @ Rd2.T @ Rpe) * self.kr2
+        # ).reshape(3, 1)
 
-        # e_euler = re1_hat.T @ dHdRe[0, :].reshape(3, 1) \
-        #           + re2_hat.T @ dHdRe[1, :].reshape(3, 1) \
-        #           + re3_hat.T @ dHdRe[2, :].reshape(3, 1)
+        e_euler = re1_hat.T @ dHdRe[0, :].reshape(3, 1) \
+                  + re2_hat.T @ dHdRe[1, :].reshape(3, 1) \
+                  + re3_hat.T @ dHdRe[2, :].reshape(3, 1)
 
         bw = -e_euler - self.Kw @ eW \
              - self.hat_map(np.squeeze(pv)) @ vel \
-             - self.hat_map(np.squeeze(pw)) @ angvel
+             - self.hat_map(np.squeeze(pw)) @ angvel - Dw @ angvel
 
         bv = -R.T @ dhdpe - self.Kv @ ev - self.hat_map(np.squeeze(pv)) @ angvel \
-             + self.M @ (R.T @ acc_des - self.hat_map(np.squeeze(angvel)) @ R.T @ vel_des)
+             + self.M @ (R.T @ acc_des - self.hat_map(np.squeeze(angvel)) @ R.T @ vel_des) - Dv @ vel
 
         wrench = np.hstack((np.squeeze(bv), np.squeeze(bw)))
         u = g_matrix_dagger @ wrench
@@ -427,6 +293,8 @@ class EnergyBasedController:
         tau_R = u2
         u = np.array([tau_L, tau_R])
         u = np.clip(u, -self.maxTorque, self.maxTorque)
+        energy = 1/2 * (pv.T @ np.linalg.inv(self.M) @ pv + pw.T @ np.linalg.inv(self.Inertia) @ pw)
+        print(energy)
         return u, done
 
     def compare_with_ground_truth_g_matrix(self, learnt_g):

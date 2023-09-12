@@ -3,17 +3,51 @@ from sapien.utils import Viewer
 import numpy as np
 import os
 import sys
-from transforms3d.quaternions import mat2quat
 from transforms3d.euler import euler2quat, quat2euler, mat2euler, euler2mat
 from energy_based_new_lyapunov import EnergyBasedController
-import pandas as pd
 import time
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+import matplotlib as mpl
 from itertools import product
 THIS_DIR = os.path.dirname(os.path.abspath(__file__)) + '/data'
 PARENT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(PARENT_DIR)
+
+
+def draw_robot_in_plot(trajectory):
+    """
+    draw the robot as a rectangle with its orientation in matplotlib
+    """
+    fig = plt.figure(figsize=(8, 6))
+    robot_width = 0.1
+    robot_length = 0.1
+    for i in tqdm(range(len(trajectory))):
+        x, y, yaw = trajectory[i]
+        print(x, y, yaw)
+        x_corners = [
+            x + robot_length / 2 * np.cos(yaw) + robot_width / 2 * np.cos(yaw + np.pi / 2),
+            x + robot_length / 2 * np.cos(yaw) + robot_width / 2 * np.cos(yaw - np.pi / 2),
+            x + robot_length / 2 * np.cos(yaw) - robot_width / 2 * np.cos(yaw - np.pi / 2),
+            x + robot_length / 2 * np.cos(yaw) - robot_width / 2 * np.cos(yaw + np.pi / 2),
+        ]
+
+        y_corners = [
+            y + robot_length / 2 * np.sin(yaw) + robot_width / 2 * np.sin(yaw + np.pi / 2),
+            y + robot_length / 2 * np.sin(yaw) + robot_width / 2 * np.sin(yaw - np.pi / 2),
+            y + robot_length / 2 * np.sin(yaw) - robot_width / 2 * np.sin(yaw - np.pi / 2),
+            y + robot_length / 2 * np.sin(yaw) - robot_width / 2 * np.sin(yaw + np.pi / 2),
+        ]
+
+        plt.fill(x_corners + [x_corners[0]], y_corners + [y_corners[0]], 'b', alpha=0.7)
+        plt.plot(x, y, 'g--')  # Plot the trajectory in green dashes
+
+        plt.xlabel('X Position')
+        plt.ylabel('Y Position')
+        plt.title('Robot Trajectory with Yaw')
+        plt.axis('equal')  # Equal aspect ratio ensures the robot looks like a rectangle
+
+        plt.show(block=True)
 
 
 def create_jackal_ackerman(scene: sapien.Scene,
@@ -152,6 +186,28 @@ def parse_args():
     return args
 
 
+def plot_robot_trajectory(trajectory):
+    plt.figure(figsize=(8, 6))
+
+    for i in range(len(trajectory)):
+        x, y, yaw = trajectory[i]
+        # Draw a rectangle to represent the robot
+        robot_length = 0.1
+        robot_width = 0.1
+        dx = robot_length * np.cos(yaw)
+        dy = robot_length * np.sin(yaw)
+        plt.quiver(x, y, dx, dy, angles='xy', scale_units='xy', scale=0.02, color='b', width=0.01)
+
+        plt.plot(x, y, 'g--')  # Plot the trajectory in green dashes
+
+    plt.xlabel('X Position')
+    plt.ylabel('Y Position')
+    plt.title('Robot Trajectory with Yaw')
+    plt.axis('equal')  # Equal aspect ratio ensures the robot looks like a rectangle
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
 def get_joints_dict(articulation: sapien.Articulation):
     joints = articulation.get_joints()
     joint_names = [joint.name for joint in joints]
@@ -176,9 +232,11 @@ def ref_traj(mode, t, xc, yc, r, f):
     return result
 
 
-def main(args, fix_root_link=True, xdes: float = 5, ydes: float = 5, thdes: float = np.pi/4):
+def main(args, fix_root_link=True, x_start: float = 10, y_start: float = 10, yaw_start: float = np.pi/4):
     args = args
-
+    xdes = 0
+    ydes = 0
+    thdes = 0
     engine = sapien.Engine()
     renderer = sapien.VulkanRenderer()
     engine.set_renderer(renderer)
@@ -195,7 +253,9 @@ def main(args, fix_root_link=True, xdes: float = 5, ydes: float = 5, thdes: floa
     scene.add_directional_light([0, 1, -1], [0.5, 0.5, 0.5])
     scene.add_ground(altitude=0)
     jackal = create_jackal_ackerman(scene)
-    jackal.set_pose(sapien.Pose([0, 0, 0.175], [1, 0, 0, 0]))
+    quat_start = euler2quat(0, 0, yaw_start)
+    print(quat_start)
+    jackal.set_pose(sapien.Pose([x_start, y_start, 0.175],quat_start))
 
     viewer = Viewer(renderer)
     viewer.set_scene(scene)
@@ -205,7 +265,6 @@ def main(args, fix_root_link=True, xdes: float = 5, ydes: float = 5, thdes: floa
     steps = 0
 
     controller = EnergyBasedController(M1_known=False, M2_known=False, maxTorque=5, checkpoint=args.checkpoint)
-    # controller = EnergyBasedController(M1_known=False, M2_known=False, maxTorque=5)
     links = jackal.get_links()
     applied = 0
     joints = get_joints_dict(jackal)
@@ -222,15 +281,14 @@ def main(args, fix_root_link=True, xdes: float = 5, ydes: float = 5, thdes: floa
     control = np.zeros((4, 1))
     done = False
     trajectory = np.empty((0, 3))
+    hamiltonian = []
     done = False
     qd = dict()
-    for steps in tqdm(range(10_000)):
+    for steps in tqdm(range(3_000)):
         if done:
             break
-        # passive_force = jackal.compute_passive_force(True, True, False)
         pose = jackal.get_pose()
         qd["pos"] = np.array(pose.p).reshape(-1, )
-        # qd["pos"] = np.array([0, 0, pose.p[2]]).reshape(-1, )
         rot = sapien.Pose.to_transformation_matrix(pose)[:3, :3]
         qd["rot"] = rot
         v, w = links[0].get_velocity(), links[0].get_angular_velocity()
@@ -289,39 +347,77 @@ if __name__ == '__main__':
     # x = np.linspace(-3, 3, 5)
     # y = np.linspace(-3, 3, 5)
     # th = np.linspace(np.pi/2, np.pi/2, 5)
-    x = [2]
-    y = [-2]
-    th = [-0*np.pi/3]
-    waypoints = list(product(x, y, th))
-    for it in tqdm(range(len(waypoints))):
-        xdes, ydes, thdes = waypoints[it]
-        trajectory = main(args, True, *waypoints[it])
-        fig, axs = plt.subplots(2, 2)
-        N = len(trajectory)
-        axs[0, 0].plot(range(N), trajectory[:, 0], 'r', label='x')
-        axs[0, 0].plot(range(N), [xdes]*N, 'b--', label='desired x')
-        axs[0, 0].set_xlabel("Iterations")
-        axs[0, 0].set_ylabel("X Coordinate")
-        axs[0, 0].legend(loc="upper right")
+    x_start = 6
+    y_start = 0.001
+    yaw_start = 2*np.pi/4
+    trajectory = main(args, True, x_start=x_start, y_start=y_start, yaw_start=yaw_start)
+    np.save("{}/x={:.3f} y={:.3f} theta={:.3f}.npy".format(THIS_DIR, x_start, y_start, yaw_start), trajectory)
+    if not os.path.exists("{}/png/x={:.3f} y={:.3f} theta={:.3f}".format(THIS_DIR, x_start, y_start, yaw_start)):
+        os.mkdir("{}/png/x={:.3f} y={:.3f} theta={:.3f}".format(THIS_DIR, x_start, y_start, yaw_start))
 
-        axs[0, 1].plot(range(N), trajectory[:, 1], 'r', label='y')
-        axs[0, 1].plot(range(N), [ydes]*N, 'b--', label='desired y')
-        axs[0, 1].set_xlabel("Iterations")
-        axs[0, 1].set_ylabel("Y Coordinate")
-        axs[0, 1].legend(loc="upper right")
+    plt.rcParams['figure.figsize'] = (10, 8)
+    plt.rcParams['pdf.fonttype'] = 42
+    plt.rcParams['ps.fonttype'] = 42
+    plt.rcParams['text.usetex'] = True
+    minx = np.floor(min(trajectory[:, 0]) - .5)
+    maxx = np.ceil(max(trajectory[:, 0]) + 2.5)
+    miny = np.floor(min(trajectory[:, 1]) - .5)
+    maxy = np.ceil(max(trajectory[:, 1]) + 2.5)
+    thmin = np.floor(min(trajectory[:, 2]) - .5)
+    thmax = np.ceil(max(trajectory[:, 2]) + 2.5)
 
-        axs[1, 0].plot(range(N), trajectory[:, 2], 'r', label=r'$\theta$')
-        axs[1, 0].plot(range(N), [thdes]*N, 'b--', label='desired' + r' $\theta$')
-        axs[1, 0].set_xlabel("Iterations")
-        axs[1, 0].set_ylabel("Yaw")
-        axs[1, 0].legend(loc="upper right")
+    N = len(trajectory)
+    fontsize = 32
+    plt.plot(range(N), trajectory[:, 0], 'r', label='x')
+    plt.plot(range(N), [0] * N, 'b--', label='desired x')
+    plt.xlabel("Iterations", fontsize=fontsize)
+    plt.ylabel("X Coordinate", fontsize=fontsize)
+    plt.legend(loc="upper right", fontsize=fontsize)
+    plt.ylim([minx, maxx])
+    plt.tick_params(axis='x', labelsize=fontsize)
+    plt.tick_params(axis='y', labelsize=fontsize)
+    plt.savefig("{}/png/x={:.3f} y={:.3f} theta={:.3f}/x.pdf".format(THIS_DIR, x_start, y_start, yaw_start), dpi=500, format='pdf')
+    plt.show(block=True)
 
-        axs[1, 1].scatter(trajectory[:, 0], trajectory[:, 1], s=0.08, label='trajectory')
-        axs[1, 1].set_xlabel("X coordinate")
-        axs[1, 1].set_ylabel("Y Coordinate")
-        axs[1, 1].legend(loc="upper right")
-        plt.savefig("{}/png/x={:.3f} y={:.3f} theta={:.3f}.png".format(THIS_DIR, xdes, ydes, thdes))
-        plt.show(block=True)
+    plt.plot(range(N), trajectory[:, 1], 'r', label='y')
+    plt.plot(range(N), [0] * N, 'b--', label='desired y')
+    plt.xlabel("Iterations", fontsize=fontsize)
+    plt.ylabel("Y Coordinate", fontsize=fontsize)
+    plt.legend(loc="upper right", fontsize=fontsize)
+    plt.ylim([miny, maxy])
+    plt.tick_params(axis='x', labelsize=fontsize)
+    plt.tick_params(axis='y', labelsize=fontsize)
+    plt.savefig("{}/png/x={:.3f} y={:.3f} theta={:.3f}/y.pdf".format(THIS_DIR, x_start, y_start, yaw_start), dpi=500, format='pdf')
+    plt.show(block=True)
 
-        # ToDo --> Fix multiple trajectory tests with controller in sapien. currently crashes after 2 sims
+    plt.plot(range(N), trajectory[:, 2], 'r', label=r'$\theta$')
+    plt.plot(range(N), [0] * N, 'b--', label='desired' + r' $\theta$')
+    plt.xlabel("Iterations", fontsize=fontsize)
+    plt.ylabel("Yaw", fontsize=fontsize)
+    plt.legend(loc="upper right", fontsize=fontsize)
+    plt.ylim([thmin, thmax])
+    plt.tick_params(axis='x', labelsize=fontsize)
+    plt.tick_params(axis='y', labelsize=fontsize)
+    plt.savefig("{}/png/x={:.3f} y={:.3f} theta={:.3f}/yaw.pdf".format(THIS_DIR, x_start, y_start, yaw_start), dpi=500, format='pdf')
+    plt.show(block=True)
+
+    plt.scatter(trajectory[:, 0], trajectory[:, 1], s=0.25, label='trajectory')
+    arrow_x = trajectory[:, 0][::100]
+    arrow_y = trajectory[:, 1][::100]
+    arrow_dx = np.cos(trajectory[:, 2][::100]) * 1
+    arrow_dy = np.sin(trajectory[:, 2][::100]) * 1
+    plt.quiver(arrow_x, arrow_y, arrow_dx, arrow_dy, scale=.95, scale_units='xy', angles='xy', color='magenta', label="Orientation")
+    plt.xlabel("X coordinate", fontsize=fontsize)
+    plt.ylabel("Y Coordinate", fontsize=fontsize)
+    plt.plot(trajectory[0, 0], trajectory[0, 1], 'rx', label="start position")
+    plt.plot(trajectory[-1, 0], trajectory[-1, 1], 'go', label="end position")
+    plt.plot(0, 0, 'b*', label='desired end position')
+    plt.xlim([minx, maxx + 6.5])
+    plt.ylim([miny, maxy])
+    plt.tick_params(axis='x', labelsize=fontsize)
+    plt.tick_params(axis='y', labelsize=fontsize)
+    plt.legend(loc="upper right", fontsize=22)
+    plt.savefig("{}/png/x={:.3f} y={:.3f} theta={:.3f}/trajectory.pdf".format(THIS_DIR, x_start, y_start, yaw_start), dpi=500, format='pdf')
+    plt.show(block=True)
+    # ToDo --> Fix multiple trajectory tests with controller in sapien. currently crashes after 2 sims
 

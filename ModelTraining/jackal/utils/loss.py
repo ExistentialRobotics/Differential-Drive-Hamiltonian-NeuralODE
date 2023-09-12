@@ -21,7 +21,8 @@ def point_cloud_l2_loss_for_successive_point_clouds(
     """
     num_particles = observedPointClouds.shape[-1]
     samples_per_control = observedPointClouds.shape[0]
-
+    # print(f"observation shapes : {observedPointClouds.shape}")
+    # print(f"predicted state shapes : {predictedStates.shape}")
     # 4X480X3X20 --> 4X480X20X3 --> 4 X 480 X 2 X 20 X 3
     x = observedPointClouds.permute(0, 1, 2, 4, 3)  # 4 X 480 X 2 X 5 X 20 --> 4 X 480 X 2 X 20 X 5
     x_hat, R_hat, q_dot_hat, u_hat = torch.split(predictedStates, split, dim=2)
@@ -38,9 +39,8 @@ def point_cloud_l2_loss_for_successive_point_clouds(
     R_hat_transpose_cat = R_hat_transpose_cat.permute(1, 2, 0, 3, 4)
     x_hat_cat = x_hat.repeat(num_particles, 1, 1, 1)
     x_hat_cat = x_hat_cat.permute(1, 2, 0, 3)
-
     error_cat = None
-    for i in range(samples_per_control):               # p_R2 =  R2_T_w @ p_w = w_T_R2 ^-1 @ p_w = [w_R_2  w_t_2; 0 , 1] ^-1 @ p_w
+    for i in range(0, samples_per_control, 3):  # p_R2 =  R2_T_w @ p_w = w_T_R2 ^-1 @ p_w = [w_R_2  w_t_2; 0 , 1] ^-1 @ p_w
         source_pc = x[i, :, 0, :, :3]
         target_pc = x[i, :, 1, :, :3]
 
