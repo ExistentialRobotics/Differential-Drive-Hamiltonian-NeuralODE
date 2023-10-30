@@ -133,9 +133,6 @@ class PSDInertial(torch.nn.Module):
             D = torch.bmm(L, L.permute(0, 2, 1))
             for i in range(self.diag_dim):
                 D[:, i, i] = D[:, i, i] + 0.01
-            # D[:, 1, 2] = D[:, 2, 1] = D[:, 0, 2] = D[:, 2, 0] = 0  # set off diagonals xz and yz to 0
-            # D[:, 0, 0] = 1/0.25
-            # D[:, 1, 1] = 1/0.25
             return D
 
 

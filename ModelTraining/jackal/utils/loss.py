@@ -21,10 +21,7 @@ def point_cloud_l2_loss_for_successive_point_clouds(
     """
     num_particles = observedPointClouds.shape[-1]
     samples_per_control = observedPointClouds.shape[0]
-    # print(f"observation shapes : {observedPointClouds.shape}")
-    # print(f"predicted state shapes : {predictedStates.shape}")
-    # 4X480X3X20 --> 4X480X20X3 --> 4 X 480 X 2 X 20 X 3
-    x = observedPointClouds.permute(0, 1, 2, 4, 3)  # 4 X 480 X 2 X 5 X 20 --> 4 X 480 X 2 X 20 X 5
+    x = observedPointClouds.permute(0, 1, 2, 4, 3)
     x_hat, R_hat, q_dot_hat, u_hat = torch.split(predictedStates, split, dim=2)
     R_hat = R_hat.flatten(start_dim=0, end_dim=1)
     norm_R_hat = compute_rotation_matrix_from_unnormalized_rotmat(R_hat)
@@ -40,7 +37,8 @@ def point_cloud_l2_loss_for_successive_point_clouds(
     x_hat_cat = x_hat.repeat(num_particles, 1, 1, 1)
     x_hat_cat = x_hat_cat.permute(1, 2, 0, 3)
     error_cat = None
-    for i in range(0, samples_per_control, 3):  # p_R2 =  R2_T_w @ p_w = w_T_R2 ^-1 @ p_w = [w_R_2  w_t_2; 0 , 1] ^-1 @ p_w
+    for i in range(0, samples_per_control, 3):
+        # p_R2 =  R2_T_w @ p_w = w_T_R2 ^-1 @ p_w = [w_R_2  w_t_2; 0 , 1] ^-1 @ p_w
         source_pc = x[i, :, 0, :, :3]
         target_pc = x[i, :, 1, :, :3]
 
@@ -53,54 +51,12 @@ def point_cloud_l2_loss_for_successive_point_clouds(
             error_cat = torch.unsqueeze(error, dim=0)
         else:
             error_cat = torch.cat((error_cat, torch.unsqueeze(error, dim=0)), dim=0)
-    # print(f"error: {error_cat}")
-    error_final = error_cat.flatten(start_dim=0, end_dim=2)
-    cost = torch.norm(error_final, dim=1).mean()
-    return cost
-
-
-def point_cloud_L2_loss(c, c_hat, split):
-    # z2 - ((R1' * (p2-p1)) - z1)
-    num_particles = c.shape[3]
-    samples_per_control = c_hat.shape[0]
-
-    x = c.permute(0, 1, 3, 2)
-    x_hat, R_hat, q_dot_hat, u_hat = torch.split(c_hat, split, dim=2)
-    R_hat = R_hat.flatten(start_dim=0, end_dim=1)
-    norm_R_hat = compute_rotation_matrix_from_unnormalized_rotmat(R_hat)
-    norm_R_hat = norm_R_hat.reshape(c_hat.shape[0], c_hat.shape[1], 3, 3)
-    # norm_R_hat = norm_R_hat.reshape(c_hat.shape[1], c_hat.shape[0], 3, 3)
-    # norm_R_hat = norm_R_hat.permute(1,0,2,3)
-
-    # R_hat = R_hat.reshape(c_hat.shape[0], c_hat.shape[1], 3, 3)
-    R_hat = norm_R_hat
-    R_hat_transpose = R_hat.transpose(-2, -1)
-
-    R_hat_cat = R_hat.repeat(num_particles, 1, 1, 1, 1)
-    R_hat_cat = R_hat_cat.permute(1, 2, 0, 3, 4)
-    R_hat_transpose_cat = R_hat_transpose.repeat(num_particles, 1, 1, 1, 1)
-    R_hat_transpose_cat = R_hat_transpose_cat.permute(1, 2, 0, 3, 4)
-    x_hat_cat = x_hat.repeat(num_particles, 1, 1, 1)
-    x_hat_cat = x_hat_cat.permute(1, 2, 0, 3)
-
-    error_cat = None
-    for i in range(samples_per_control - 1):
-        z1w = R_hat_cat[i, :, :, :, :] @ torch.unsqueeze(x[i, :, :, :], dim=3) + torch.unsqueeze(x_hat_cat[i, :, :, :],
-                                                                                                 dim=3)
-        z2b = R_hat_transpose_cat[i + 1, :, :, :, :] @ z1w - R_hat_transpose_cat[i + 1, :, :, :, :] @ torch.unsqueeze(
-            x_hat_cat[i + 1, :, :, :], dim=3)
-        error = torch.squeeze(torch.unsqueeze(x[i + 1, :, :, :], dim=3) - z2b)
-        if (i == 0):
-            error_cat = torch.unsqueeze(error, dim=0)
-        else:
-            error_cat = torch.cat((error_cat, torch.unsqueeze(error, dim=0)), dim=0)
     error_final = error_cat.flatten(start_dim=0, end_dim=2)
     cost = torch.norm(error_final, dim=1).mean()
     return cost
 
 
 def pose_L2_geodesic_loss(u, u_hat, split):
-    #################
     x_hat, R_hat, q_dot_hat, u_hat = torch.split(u_hat, split, dim=2)
     x, R, q_dot, u = torch.split(u, split, dim=2)
     v_hat, w_hat = torch.split(q_dot_hat, [3, 3], dim=2)
@@ -113,11 +69,6 @@ def pose_L2_geodesic_loss(u, u_hat, split):
     w = w.flatten(start_dim=0, end_dim=1)
     w_hat = w_hat.flatten(start_dim=0, end_dim=1)
     wloss = L2_loss(w, w_hat)
-    # print("wloss: ", wloss.detach().cpu().numpy())
-    # wmean = w_hat.pow(2).mean()
-    # print("wmean: ", wmean.detach().cpu().numpy())
-    # x_qdot_u_hat = torch.cat((x_hat, q_dot_hat, u_hat), dim=1)
-    # x_qdot_u = torch.cat((x, q_dot, u), dim=1)
     x = x.flatten(start_dim=0, end_dim=1)
     x_hat = x_hat.flatten(start_dim=0, end_dim=1)
     x_loss = L2_loss(x, x_hat)
@@ -130,7 +81,6 @@ def pose_L2_geodesic_loss(u, u_hat, split):
 
 
 def pose_L2_geodesic_diff(u, u_hat, split):
-    #################
     x_hat, R_hat, q_dot_hat, u_hat = torch.split(u_hat, split, dim=1)
     x, R, q_dot, u = torch.split(u, split, dim=1)
     x_qdot_u_hat = torch.cat((x_hat, q_dot_hat, u_hat), dim=1)

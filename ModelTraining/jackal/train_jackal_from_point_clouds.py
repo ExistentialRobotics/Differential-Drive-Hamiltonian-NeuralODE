@@ -1,32 +1,14 @@
-# This code was borrowed and modified from the following repository:
-# https://github.com/thaipduong/SE3HamDL
-#
-# The original code was written by Thai Duong.
-# 
-# 
 import torch
 import argparse
 import pickle
 import numpy as np
 import os
-import sys
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_pdf import PdfPages
 from torchdiffeq import odeint, odeint_adjoint
 from utils import traj_pose_L2_geodesic_loss, pose_L2_geodesic_loss, point_cloud_l2_loss_for_successive_point_clouds
-from scipy.spatial.transform import Rotation
-from scipy.linalg import logm
 from se3hamneuralode import SE3HamNODE, from_pickle
-from data_collection import get_dataset, arrange_data
 from tqdm import tqdm
 
-# ************* DIRECTORY ************* #  
 THIS_DIR = os.path.dirname(os.path.abspath(__file__)) + '/data'
-
-# ************* PARAMETERS ************* #
-mass = 6.77
-J_list = [[1.05, 0.0, 0.0], [0.0, 1.05, 0.0], [0.0, 0.0, 2.05]]
-J = torch.tensor(J_list)
 
 
 def get_args():
@@ -34,7 +16,7 @@ def get_args():
     parser.add_argument('--learn_rate', default=5e-4, type=float, help='learning rate')
     parser.add_argument('--nonlinearity', default='tanh', type=str, help='neural net nonlinearity')
     parser.add_argument('--total_steps', default=500, type=int, help='number of gradient steps')
-    parser.add_argument('--print_every', default=10, type=int, help='number of gradient steps between prints')
+    parser.add_argument('--print_every', default=100, type=int, help='number of gradient steps between prints')
     parser.add_argument('--name', default='jackal', type=str, help='only one option right now')
     parser.add_argument('--verbose', dest='verbose', action='store_true', help='verbose?')
     parser.add_argument('--seed', default=0, type=int, help='random seed')
@@ -45,8 +27,6 @@ def get_args():
     parser.add_argument('--solver', default='rk4', type=str, help='type of ODE Solver for Neural ODE')
     parser.add_argument('--M1_known', default=0, type=int, help='Assume mass known')
     parser.add_argument('--M2_known', default=0, type=int, help='Assume inertia known')
-    parser.add_argument('--control_freq_hz', default=48.0, type=float, help='frequency of control in HZ')
-    parser.add_argument('--samples_per_control', default=5, type=int, help='number of samples per control action')
     return parser.parse_args()
 
 
@@ -55,19 +35,13 @@ def train(args, trainPointCloudSeq, testPointCloudSeq, t_eval):
     trainDataset: [num_trajs, samples_per_control, num_controls, 20]  # 20 = p (3) + R(12) + v(3) + w(3) + u(2)
     trainPointCloudSeq: [num_trajs, samples_per_control, num_controls, 2, 5, P]  # last two for controls
     testPointCloudSeq: [num_trajs, samples_per_control, num_controls, 2, 5, P]  # last two for controls
+
+    Predict the state of the robot using the neural ODE
+    Compute error between observed PointCloud and predicted PointCloud from the predicted state
+    This error is the loss function for the neural network
     """
     device = torch.device('cuda:' + str(0) if torch.cuda.is_available() else 'cpu')
-
-    print(f'DEVICE: {device}')
-
-    num_actions = trainPointCloudSeq.shape[2]
-    print(f'num_actions = {num_actions}')
     t_eval = torch.tensor(t_eval, requires_grad=True, dtype=torch.float32).to(device)
-
-    # For data from real jackal, dt = 0.1, number of timesteps = 1
-    # t_eval = np.array([0, 0.1])
-    # t_eval = torch.tensor(t_eval, requires_grad=True, dtype=torch.float32).to(device)
-    print(f't_eval = {t_eval}')
 
     pc_train = trainPointCloudSeq
     pc_train_cat = pc_train
@@ -83,14 +57,16 @@ def train(args, trainPointCloudSeq, testPointCloudSeq, t_eval):
         M1_known=bool(args.M1_known),
         M2_known=bool(args.M2_known)
     ).to(device)
+
     optim = torch.optim.Adam(model.parameters(), args.learn_rate, weight_decay=0.0)
     stats = {'train_loss': [], 'test_loss': []}
 
     for step in tqdm(range(args.total_steps + 1)):
-        if step % 100 == 0 and step > 0:
-            for gr in optim.param_groups:
-                gr['lr'] *= 0.5
+        if step % 100 == 0:
+            for group in optim.param_groups:
+                group['lr'] *= 0.5
         batch = pc_train_cat.shape[0]
+
         # Train dataset 
         target_hat = None
         for u in range(pc_train_cat.shape[2]):
@@ -119,6 +95,7 @@ def train(args, trainPointCloudSeq, testPointCloudSeq, t_eval):
                 y_pred = y_pred.permute(1, 0, 2)
                 y_pred = torch.unsqueeze(y_pred, dim=2)
                 target_hat = torch.cat((target_hat, y_pred), dim=2)
+
         target_hat = target_hat.permute(1, 0, 2, 3)
         target_hat = target_hat.flatten(1, 2)
         target = pc_train_cat.permute(1, 0, 2, 3, 4, 5)
@@ -130,8 +107,9 @@ def train(args, trainPointCloudSeq, testPointCloudSeq, t_eval):
             split=[model.xdim, model.Rdim, model.twistdim, model.udim]
         )
 
+        # Add a regularization loss on the output of the gnet to promote learning a sparse g network
         gnet_l1_loss = 0
-        lambda_gnet_l1_loss = 1e-3
+        lambda_gnet_l1_loss = 1e-2
         rand_sample_indx = np.random.randint(0, target_hat.shape[0])
         rand_control_indx = np.random.randint(1, target_hat.shape[1])
         q = target_hat[rand_sample_indx, rand_control_indx, :12]
@@ -171,6 +149,13 @@ def train(args, trainPointCloudSeq, testPointCloudSeq, t_eval):
             predictedStates=target_hat,
             split=[model.xdim, model.Rdim, model.twistdim, model.udim]
         )
+        gnet_l1_loss = 0
+        lambda_gnet_l1_loss = 1e-2
+        rand_sample_indx = np.random.randint(0, target_hat.shape[0])
+        rand_control_indx = np.random.randint(1, target_hat.shape[1])
+        q = target_hat[rand_sample_indx, rand_control_indx, :12]
+        gnet_l1_loss += torch.abs(model.g_net(q)).mean()
+        test_loss += (lambda_gnet_l1_loss * gnet_l1_loss)
 
         # Save loss 
         stats['train_loss'].append(train_loss.item())
@@ -248,7 +233,7 @@ def train(args, trainPointCloudSeq, testPointCloudSeq, t_eval):
     return model, stats
 
 
-def saveModelStats(model, stats):
+def save_model_stats(model, stats):
     os.makedirs(THIS_DIR) if not os.path.exists(THIS_DIR) else None
     label = '-se3ham_pointclouds'
     path = '{}/PointCloudTrainedModels/{}{}-{}-{}p.tar'.format(THIS_DIR, 'jackal', label, 'rk4', '5')
@@ -262,17 +247,17 @@ def saveModelStats(model, stats):
 if __name__ == "__main__":
     args = get_args()
     point_cloud_data = np.load(f"{THIS_DIR}/PointCloudData.npy")
-    num_controls = point_cloud_data.shape[2]
-    split_idx = int(num_controls * 0.8)
-    train_point_cloud_sequence = point_cloud_data[:, :, :split_idx, :, :, :]
-    test_point_cloud_sequence = point_cloud_data[:, :, split_idx:, :, :, :]
+    num_trajectories = point_cloud_data.shape[0]
+    split_idx = int(num_trajectories * 0.8)
+    train_point_cloud_sequence = point_cloud_data[:split_idx, :, :, :, :, :]
+    test_point_cloud_sequence = point_cloud_data[split_idx:, :, :, :, :, :]
     print(f"train_point_cloud_sequence shape : {train_point_cloud_sequence.shape}")
     print(f"test_point_cloud_sequence shape : {test_point_cloud_sequence.shape}")
-    t_eval = np.array([0, 0.05, 0.1, 0.15, 0.20])
+    t_eval = np.array([0, 0.05, 0.10, 0.15, 0.20])
     model, stats = train(
         args=args,
         trainPointCloudSeq=train_point_cloud_sequence,
         testPointCloudSeq=test_point_cloud_sequence,
         t_eval=t_eval
     )
-    saveModelStats(model, stats)
+    save_model_stats(model, stats)

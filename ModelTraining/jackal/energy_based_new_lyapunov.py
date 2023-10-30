@@ -1,14 +1,16 @@
 import os
 import numpy as np
 from numpy.linalg import norm
-from numpy import trace as tr
 import torch
-from transforms3d.euler import mat2euler, euler2mat
+from transforms3d.euler import mat2euler
 import time
 from se3hamneuralode import SE3HamNODE, from_pickle
 from scipy.linalg import logm, expm
 device = torch.device('cuda:' + str(0) if torch.cuda.is_available() else 'cpu')
 THIS_DIR = os.path.dirname(os.path.abspath(__file__)) + '/data'
+
+DISTANCE_ERROR_THRESHOLD: float = 1e-2
+ANGULAR_ERROR_THRESHOLD:  float = np.deg2rad(3)
 
 
 def hat_map(x):
@@ -26,10 +28,11 @@ class EnergyBasedController:
     Derivation
     """
 
-    def __init__(self, M1_known: bool = False, M2_known: bool = False, maxTorque: float =2, Kp = None, Kv = None, KR1 = None, KR2 = None, Kw = None, checkpoint=-1):
+    def __init__(self, M1_known: bool = False, M2_known: bool = False, maxTorque: float = 2, checkpoint=-1):
         checkpoint = '' if checkpoint == -1 else ('-' + str(checkpoint))
         self.M1_known = M1_known
         self.M2_known = M2_known
+
         # Dimensions
         self.posdim = 3
         self.eulerdim = 3
@@ -66,23 +69,12 @@ class EnergyBasedController:
 
         self.mass = 8.5
         self.Jzz = 0.33
-        self.A = np.array([[self.wheel_radius / 2, self.wheel_radius / 2],
-                           [-self.wheel_radius / (self.terrain_param * self.wheel_distance),
-                            self.wheel_radius / (self.terrain_param * self.wheel_distance)]])
-        self.B = np.array([[self.mass * self.wheel_radius2 / 4 + self.wheel_radius2 * self.Jzz / (
-                self.terrain_param * self.wheel_distance2),
-                            self.mass * self.wheel_radius2 / 4 - self.wheel_radius2 * self.Jzz / (
-                                    self.terrain_param * self.wheel_distance2)],
-                           [self.mass * self.wheel_radius2 / 4 - self.wheel_radius2 * self.Jzz / (
-                                   self.terrain_param * self.wheel_distance2),
-                            self.mass * self.wheel_radius2 / 4 + self.wheel_radius2 * self.Jzz / (
-                                    self.terrain_param * self.wheel_distance2)]])
-        # self.g_matrix = self.A @ np.linalg.inv(self.B)
 
         self.g_matrix = np.array(
             [[1 / self.wheel_radius, 1 / self.wheel_radius], [0, 0], [0, 0], [0, 0], [0, 0],
              [-self.vehicle_width / (2 * self.wheel_radius),
               self.vehicle_width / (2 * self.wheel_radius)]])
+
         self.g_matrix_dagger = np.matmul(np.linalg.inv(np.matmul(self.g_matrix.T, self.g_matrix)), self.g_matrix.T)
 
         self.maxForce = 10.0
@@ -96,10 +88,11 @@ class EnergyBasedController:
         self.e3 = np.array([0, 0, 1]).reshape(3, 1)
         self.J = np.array([[0, -1, 0], [1, 0, 0], [0, 0, 1]])
 
-        self.kp = 1.2
+        # Energy based control parameters
+        self.kp = 1.6
         self.kv = self.kp
-        self.kr1 = 7
-        self.kr2 = 3
+        self.kr1 = 15
+        self.kr2 = 6
         self.kw = 1
 
         self.Kp = self.kp * np.diag([1, 1, 1])
@@ -114,49 +107,35 @@ class EnergyBasedController:
                            pretrain=False, M1_known=self.M1_known,
                            M2_known=self.M2_known
                            ).to(device)
-        # saved = "trained model unknown M1 M2"
-        saved = ""
-        using_pointcloud = True
         checkpoint = checkpoint
-        if using_pointcloud:
-            path = f'{THIS_DIR}/PointCloudTrainedModels/jackal-se3ham_pointclouds-rk4-5p' + checkpoint + '.tar'
-        else:
-            path = f'{THIS_DIR}/{saved}jackal-se3ham-rk4-5p' + checkpoint + '.tar'
-        print(path)
+        path = f'{THIS_DIR}/PointCloudTrainedModels/TrainedModel/jackal-se3ham_pointclouds-rk4-5p' + checkpoint + '.tar'
         model.load_state_dict(torch.load(path, map_location=device))
 
         return model
 
     def Rpe_mat(self, v):
-        '''
+        """
         Input (v)   : (2,1)-shaped numpy array
-        Output (Rpe): (2,2)-shaped numpy array
-        '''
+        Output (Rpe): (2,2)-shaped numpy array that defines the rotation matrix corresponding to heading difference
+        """
+
         v_norm = np.linalg.norm(np.squeeze(v))
         Rpe = 1 / v_norm * np.column_stack((-v, -self.J @ v, v_norm * self.e3))
         return Rpe
 
-    def hat_map(self, w):
-        w_hat = np.array([[0, -w[2], w[1]],
-                          [w[2], 0, -w[0]],
-                          [-w[1], w[0], 0]])
-        return w_hat
-
-    def vee_map(self, R):
-        arr_out = np.zeros(3)
-        arr_out[0] = -R[1, 2]
-        arr_out[1] = R[0, 2]
-        arr_out[2] = -R[0, 1]
-        return arr_out
-
-
-
-    def get_control_new(self, currentState, targetState):
+    def compute_control(self, currentState, targetState,
+                        accel_desired=np.array([0, 0, 0]).reshape((3, 1)),
+                        ang_accel_desired=np.array([0, 0, 0]).reshape((3, 1))):
         """
         currentState: (18,)-shaped array containing current position, orientation, velocity, angular velocity.
         targetState: (18,)-shaped array containing target position,
                             target orientation, target velocity, target angular velocity
+
+        output: [left_torque, right_torque], done where done is a boolean indicating whether we reached close to goal or not
+
+        Refer to paper https://arxiv.org/pdf/2309.09163.pdf for derivation of controller details
         """
+
         done = False
         pos, Rvec, vel, angvel = np.split(np.expand_dims(currentState, axis=1),
                                           [self.posdim, self.posdim + self.Rdim,
@@ -168,8 +147,8 @@ class EnergyBasedController:
                                                           [self.posdim, self.posdim + self.Rdim,
                                                            self.posdim + self.Rdim + self.linveldim], axis=0)
         R_des = Rvec_des.reshape((3, 3))
-        acc_des = np.array([0, 0, 0]).reshape((3, 1))
-        angacc_des = np.array([0, 0, 0]).reshape((3, 1))
+        acc_des = accel_desired
+        angacc_des = ang_accel_desired
         q = np.concatenate((pos[:3].reshape(-1, ), R.flatten()))
         q = torch.tensor(q, requires_grad=True, dtype=torch.float32).to(device)
         q = q.view(1, 12)
@@ -178,19 +157,14 @@ class EnergyBasedController:
         omega = torch.tensor(angvel, requires_grad=True, dtype=torch.float32).to(device).view(1, 3)
         qp = torch.cat((q, v, omega), dim=1)
         g_q = self.gnet(q).detach().cpu().numpy()[0]
-        g_q[1:5] = 0
-        print(f"g matrix : {g_q}")
+        g_q[1:5] = 0  # Add the non holonomic constraint for differential drive
         g_matrix_dagger = np.linalg.inv(g_q.T @ g_q) @ g_q.T
-        # g_matrix_dagger[1,0] = g_matrix_dagger[0, 0]
-        # g_matrix_dagger[1, -1] = -g_matrix_dagger[0, -1]
-        print(f"g dagger : {g_matrix_dagger}")
         pos_e = pos - pos_des
         Re = R_des.T @ R
 
         qe = np.concatenate((pos_e[:3].reshape(-1, ), Re.flatten()))
         qe = torch.tensor(qe, requires_grad=True, dtype=torch.float32).to(device)
         qe = qe.view(1, 12)
-        xetensor, Retensor = torch.split(qe, [3, 9], dim=1)
 
         if not self.M1_known:
             self.M = np.linalg.inv(self.Mnet(xtensor).detach().cpu().numpy()[0])
@@ -199,7 +173,6 @@ class EnergyBasedController:
         D = self.Dnet(qp).detach().cpu().numpy()[0]
         Dv = D[:3, :3]
         Dw = D[3:, 3:]
-        print(f"mass : {self.M} \nInertial: {self.Inertia}")
 
         # Current State
         pv = self.M @ vel
@@ -209,19 +182,16 @@ class EnergyBasedController:
         yaw_error = yaw_error
         pos_e_norm = np.linalg.norm(np.squeeze(pos_e))
         print("position error : {:.3f} || yaw error : {:.3f}".format(pos_e_norm, yaw_error))
-        if pos_e_norm < 0.1 and np.abs(yaw_error) < 0.1:
+        if pos_e_norm < DISTANCE_ERROR_THRESHOLD and np.abs(yaw_error) < ANGULAR_ERROR_THRESHOLD:
             done = True
-            self.compare_with_ground_truth_g_matrix(learnt_g=g_q)
             print(f"Reached close to goal")
-            print(f"Distance error : {pos_e_norm} || yaw error : {yaw_error}")
             return np.array([0, 0]), done
+
         pos_e_norm = np.linalg.norm(np.squeeze(pos_e))
-
         Rpe = self.Rpe_mat(pos_e)
-
         R_perp = np.array([[0, -1, 0], [1, 0, 0], [0, 0, 1]])
-        theta2 = self.vee_map(logm((R_perp.T @ R_des.T @ Rpe)))
-        Rd2 = R_perp @ expm(self.hat_map(theta2) / np.linalg.norm(theta2) * np.pi / 2)
+        theta2 = vee_map(logm((R_perp.T @ R_des.T @ Rpe)))
+        Rd2 = R_perp @ expm(hat_map(theta2) / np.linalg.norm(theta2) * np.pi / 2)
 
         dRpedpe1 = (-pos_e[0, 0] / pos_e_norm ** 2) * Rpe - 1 / pos_e_norm * np.column_stack(
             (self.e1, self.J @ self.e1, np.zeros((3, 1))))
@@ -231,12 +201,11 @@ class EnergyBasedController:
         dRpedpe1 = np.array([[dRpedpe1[0, 0], dRpedpe1[0, 1], 0], [dRpedpe1[1, 0], dRpedpe1[1, 1], 0], [0, 0, 0]])
         dRpedpe2 = np.array([[dRpedpe2[0, 0], dRpedpe2[0, 1], 0], [dRpedpe2[1, 0], dRpedpe2[1, 1], 0], [0, 0, 0]])
 
-        theta = self.vee_map(logm(R_des.T @ Rd2.T @ Rpe))
-        Rd = expm(self.hat_map(theta) / np.linalg.norm(theta) * np.pi / 2)
-        # print(mat_to_deg(Rd))
-        re1_hat = self.hat_map(Re[0, :])
-        re2_hat = self.hat_map(Re[1, :])
-        re3_hat = self.hat_map(Re[2, :])
+        theta = vee_map(logm(R_des.T @ Rd2.T @ Rpe))
+        Rd = expm(hat_map(theta) / np.linalg.norm(theta) * np.pi / 2)
+        re1_hat = hat_map(Re[0, :])
+        re2_hat = hat_map(Re[1, :])
+        re3_hat = hat_map(Re[2, :])
 
         eW = angvel - Re.T @ angvel_des
         ev = vel - R.T @ vel_des
@@ -267,23 +236,16 @@ class EnergyBasedController:
 
         dHdRe = -.5 * self.kr1 * TkR1 * R_des.T @ Rd2.T @ Rpe @ Rd - .5 * self.kr2 * (R_des.T @ Rd2.T @ Rpe)
 
-        # e_euler = 0.25 * self.vee_map(
-        #     TkR1 * (Rd.T @ Rpe.T @ Rd2 @ R_des @ Re) - (Re.T @ R_des.T @ Rd2.T @ Rpe @ Rd) * TkR1
-        # ).reshape(3, 1) + 0.5 * self.vee_map(
-        #     self.kr2 * (Rpe.T @ Rd2 @ R_des @ Re) - (Re.T @ R_des.T @ Rd2.T @ Rpe) * self.kr2
-        # ).reshape(3, 1)
-
         e_euler = re1_hat.T @ dHdRe[0, :].reshape(3, 1) \
                   + re2_hat.T @ dHdRe[1, :].reshape(3, 1) \
                   + re3_hat.T @ dHdRe[2, :].reshape(3, 1)
 
         bw = -e_euler - self.Kw @ eW \
-             - self.hat_map(np.squeeze(pv)) @ vel \
-             - self.hat_map(np.squeeze(pw)) @ angvel - Dw @ angvel
+             - hat_map(np.squeeze(pv)) @ vel \
+             - hat_map(np.squeeze(pw)) @ angvel - Dw @ angvel
 
-        bv = -R.T @ dhdpe - self.Kv @ ev - self.hat_map(np.squeeze(pv)) @ angvel \
-             + self.M @ (R.T @ acc_des - self.hat_map(np.squeeze(angvel)) @ R.T @ vel_des) - Dv @ vel
-
+        bv = -R.T @ dhdpe - self.Kv @ ev - hat_map(np.squeeze(pv)) @ angvel \
+             + self.M @ (R.T @ acc_des - hat_map(np.squeeze(angvel)) @ R.T @ vel_des) - Dv @ vel
         wrench = np.hstack((np.squeeze(bv), np.squeeze(bw)))
         u = g_matrix_dagger @ wrench
         u1 = u[0]
@@ -293,10 +255,5 @@ class EnergyBasedController:
         tau_R = u2
         u = np.array([tau_L, tau_R])
         u = np.clip(u, -self.maxTorque, self.maxTorque)
-        energy = 1/2 * (pv.T @ np.linalg.inv(self.M) @ pv + pw.T @ np.linalg.inv(self.Inertia) @ pw)
-        print(energy)
         return u, done
 
-    def compare_with_ground_truth_g_matrix(self, learnt_g):
-        print(f"learnt g : {learnt_g}")
-        print(f"ground truth g : {self.g_matrix}")

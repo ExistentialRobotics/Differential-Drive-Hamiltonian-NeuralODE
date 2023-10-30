@@ -8,9 +8,7 @@ from energy_based_new_lyapunov import EnergyBasedController
 import time
 from tqdm import tqdm
 import matplotlib.pyplot as plt
-import matplotlib as mpl
-from itertools import product
-THIS_DIR = os.path.dirname(os.path.abspath(__file__)) + '/data'
+THIS_DIR = os.path.dirname(os.path.abspath(__file__)) + '/data/trajectories'
 PARENT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(PARENT_DIR)
 
@@ -186,28 +184,6 @@ def parse_args():
     return args
 
 
-def plot_robot_trajectory(trajectory):
-    plt.figure(figsize=(8, 6))
-
-    for i in range(len(trajectory)):
-        x, y, yaw = trajectory[i]
-        # Draw a rectangle to represent the robot
-        robot_length = 0.1
-        robot_width = 0.1
-        dx = robot_length * np.cos(yaw)
-        dy = robot_length * np.sin(yaw)
-        plt.quiver(x, y, dx, dy, angles='xy', scale_units='xy', scale=0.02, color='b', width=0.01)
-
-        plt.plot(x, y, 'g--')  # Plot the trajectory in green dashes
-
-    plt.xlabel('X Position')
-    plt.ylabel('Y Position')
-    plt.title('Robot Trajectory with Yaw')
-    plt.axis('equal')  # Equal aspect ratio ensures the robot looks like a rectangle
-    plt.legend()
-    plt.grid(True)
-    plt.show()
-
 def get_joints_dict(articulation: sapien.Articulation):
     joints = articulation.get_joints()
     joint_names = [joint.name for joint in joints]
@@ -217,22 +193,14 @@ def get_joints_dict(articulation: sapien.Articulation):
     return {joint.name: joint for joint in joints}
 
 
-def ref_traj(mode, t, xc, yc, r, f):
-    result = None
-    if mode == 'circle':
-        x = xc + r * np.cos(f * t)
-        y = yc + r * np.sin(f * t)
-        vx = -f * r * np.sin(f * t)
-        vy = f * r * np.cos(f * t)
-        th = f * t
-        omega = f
-        ax = -(f ** 2) * r * np.cos(f * t)
-        ay = -(f ** 2) * r * np.sin(f * t)
-        result = [x, y, vx, vy, th, omega, ax, ay]
-    return result
-
-
-def main(args, fix_root_link=True, x_start: float = 10, y_start: float = 10, yaw_start: float = np.pi/4):
+def main(
+        args,
+        fix_root_link=True,
+        x_start: float = 0,
+        y_start: float = 0,
+        yaw_start: float = 0,
+        mode='pose_stabilization'
+):
     args = args
     xdes = 0
     ydes = 0
@@ -247,14 +215,12 @@ def main(args, fix_root_link=True, x_start: float = 10, y_start: float = 10, yaw
     scene_config.default_restitution = args.restitution
     scene = engine.create_scene(scene_config)
     scene.set_timestep(1 / 20.0)
-    # scene.add_ground(0)
 
     scene.set_ambient_light([0.5, 0.5, 0.5])
     scene.add_directional_light([0, 1, -1], [0.5, 0.5, 0.5])
     scene.add_ground(altitude=0)
     jackal = create_jackal_ackerman(scene)
     quat_start = euler2quat(0, 0, yaw_start)
-    print(quat_start)
     jackal.set_pose(sapien.Pose([x_start, y_start, 0.175],quat_start))
 
     viewer = Viewer(renderer)
@@ -274,17 +240,12 @@ def main(args, fix_root_link=True, x_start: float = 10, y_start: float = 10, yaw
     joints['rl_wheel_joint'].set_drive_property(stiffness=0, damping=0.92)
     joints['rr_wheel_joint'].set_drive_property(stiffness=0, damping=0.92)
     passive_force = jackal.compute_passive_force(True, True, False)
-    steps = 0
-    used_PE = None
-    folder = None
-    start = time.time()
-    control = np.zeros((4, 1))
-    done = False
     trajectory = np.empty((0, 3))
-    hamiltonian = []
     done = False
     qd = dict()
-    for steps in tqdm(range(3_000)):
+    start = time.time()
+
+    for _ in tqdm(range(3_000)):
         if done:
             break
         pose = jackal.get_pose()
@@ -298,6 +259,7 @@ def main(args, fix_root_link=True, x_start: float = 10, y_start: float = 10, yaw
         qd["omega"] = np.array(w)
         trajectory = np.append(trajectory, np.array([pose.p[0], pose.p[1], mat2euler(rot)[-1]]).reshape((-1, 3))
                                , axis=0)
+
         currentState = np.concatenate(
             [
                 qd["pos"],
@@ -308,14 +270,12 @@ def main(args, fix_root_link=True, x_start: float = 10, y_start: float = 10, yaw
             axis=0
         )
 
-        # qd["pos_des"] = np.array([args.xdes, args.ydes, 0.175])
         qd["pos_des"] = np.array([xdes, ydes, pose.p[2]]).reshape(-1, )
         qd["vel_des"] = np.array([0, 0, 0])
         qd["omega_des"] = np.array([0, 0, 0])
         qd["rot_des"] = euler2mat(0, 0, thdes)
-        qd["pos_des_dot"] = np.array([0, 0, 0])
-        qd["pos_des_ddot"] = np.array([0, 0, 0])
-        controls = np.zeros(4, )
+        accel_desired = np.zeros((3, 1))
+        ang_accel_desired = np.zeros((3, 1))
         targetState = np.concatenate(
             [
                 qd["pos_des"],
@@ -325,99 +285,26 @@ def main(args, fix_root_link=True, x_start: float = 10, y_start: float = 10, yaw
             ],
             axis=0
         )
-        torques, done = controller.get_control_new(
+
+        torques, done = controller.compute_control(
             currentState=currentState,
-            targetState=targetState
+            targetState=targetState,
+            accel_desired=accel_desired,
+            ang_accel_desired=ang_accel_desired,
         )
+
         controls = np.array([torques[0], torques[1], torques[0], torques[1]])[::-1]  # right torque, left torque
-        print(controls)
-        # print(f"desired orientation of robot : {mat2euler(qd['rot_des'])[-1]}")
-        # print(f"current yaw of robot : {mat2euler(qd['rot'])[-1]}")
-        # for _ in range(5):
-        jackal.set_qf(controls)
+        jackal.set_qf(controls + passive_force)
         scene.step()
         scene.update_render()
         viewer.render()
-    # viewer.close()
     return trajectory
 
 
 if __name__ == '__main__':
     args = parse_args()
-    # x = np.linspace(-3, 3, 5)
-    # y = np.linspace(-3, 3, 5)
-    # th = np.linspace(np.pi/2, np.pi/2, 5)
-    x_start = 6
-    y_start = 0.001
-    yaw_start = 2*np.pi/4
+    x_start = 5
+    y_start = -5
+    yaw_start = -2.094
     trajectory = main(args, True, x_start=x_start, y_start=y_start, yaw_start=yaw_start)
     np.save("{}/x={:.3f} y={:.3f} theta={:.3f}.npy".format(THIS_DIR, x_start, y_start, yaw_start), trajectory)
-    if not os.path.exists("{}/png/x={:.3f} y={:.3f} theta={:.3f}".format(THIS_DIR, x_start, y_start, yaw_start)):
-        os.mkdir("{}/png/x={:.3f} y={:.3f} theta={:.3f}".format(THIS_DIR, x_start, y_start, yaw_start))
-
-    plt.rcParams['figure.figsize'] = (10, 8)
-    plt.rcParams['pdf.fonttype'] = 42
-    plt.rcParams['ps.fonttype'] = 42
-    plt.rcParams['text.usetex'] = True
-    minx = np.floor(min(trajectory[:, 0]) - .5)
-    maxx = np.ceil(max(trajectory[:, 0]) + 2.5)
-    miny = np.floor(min(trajectory[:, 1]) - .5)
-    maxy = np.ceil(max(trajectory[:, 1]) + 2.5)
-    thmin = np.floor(min(trajectory[:, 2]) - .5)
-    thmax = np.ceil(max(trajectory[:, 2]) + 2.5)
-
-    N = len(trajectory)
-    fontsize = 32
-    plt.plot(range(N), trajectory[:, 0], 'r', label='x')
-    plt.plot(range(N), [0] * N, 'b--', label='desired x')
-    plt.xlabel("Iterations", fontsize=fontsize)
-    plt.ylabel("X Coordinate", fontsize=fontsize)
-    plt.legend(loc="upper right", fontsize=fontsize)
-    plt.ylim([minx, maxx])
-    plt.tick_params(axis='x', labelsize=fontsize)
-    plt.tick_params(axis='y', labelsize=fontsize)
-    plt.savefig("{}/png/x={:.3f} y={:.3f} theta={:.3f}/x.pdf".format(THIS_DIR, x_start, y_start, yaw_start), dpi=500, format='pdf')
-    plt.show(block=True)
-
-    plt.plot(range(N), trajectory[:, 1], 'r', label='y')
-    plt.plot(range(N), [0] * N, 'b--', label='desired y')
-    plt.xlabel("Iterations", fontsize=fontsize)
-    plt.ylabel("Y Coordinate", fontsize=fontsize)
-    plt.legend(loc="upper right", fontsize=fontsize)
-    plt.ylim([miny, maxy])
-    plt.tick_params(axis='x', labelsize=fontsize)
-    plt.tick_params(axis='y', labelsize=fontsize)
-    plt.savefig("{}/png/x={:.3f} y={:.3f} theta={:.3f}/y.pdf".format(THIS_DIR, x_start, y_start, yaw_start), dpi=500, format='pdf')
-    plt.show(block=True)
-
-    plt.plot(range(N), trajectory[:, 2], 'r', label=r'$\theta$')
-    plt.plot(range(N), [0] * N, 'b--', label='desired' + r' $\theta$')
-    plt.xlabel("Iterations", fontsize=fontsize)
-    plt.ylabel("Yaw", fontsize=fontsize)
-    plt.legend(loc="upper right", fontsize=fontsize)
-    plt.ylim([thmin, thmax])
-    plt.tick_params(axis='x', labelsize=fontsize)
-    plt.tick_params(axis='y', labelsize=fontsize)
-    plt.savefig("{}/png/x={:.3f} y={:.3f} theta={:.3f}/yaw.pdf".format(THIS_DIR, x_start, y_start, yaw_start), dpi=500, format='pdf')
-    plt.show(block=True)
-
-    plt.scatter(trajectory[:, 0], trajectory[:, 1], s=0.25, label='trajectory')
-    arrow_x = trajectory[:, 0][::100]
-    arrow_y = trajectory[:, 1][::100]
-    arrow_dx = np.cos(trajectory[:, 2][::100]) * 1
-    arrow_dy = np.sin(trajectory[:, 2][::100]) * 1
-    plt.quiver(arrow_x, arrow_y, arrow_dx, arrow_dy, scale=.95, scale_units='xy', angles='xy', color='magenta', label="Orientation")
-    plt.xlabel("X coordinate", fontsize=fontsize)
-    plt.ylabel("Y Coordinate", fontsize=fontsize)
-    plt.plot(trajectory[0, 0], trajectory[0, 1], 'rx', label="start position")
-    plt.plot(trajectory[-1, 0], trajectory[-1, 1], 'go', label="end position")
-    plt.plot(0, 0, 'b*', label='desired end position')
-    plt.xlim([minx, maxx + 6.5])
-    plt.ylim([miny, maxy])
-    plt.tick_params(axis='x', labelsize=fontsize)
-    plt.tick_params(axis='y', labelsize=fontsize)
-    plt.legend(loc="upper right", fontsize=22)
-    plt.savefig("{}/png/x={:.3f} y={:.3f} theta={:.3f}/trajectory.pdf".format(THIS_DIR, x_start, y_start, yaw_start), dpi=500, format='pdf')
-    plt.show(block=True)
-    # ToDo --> Fix multiple trajectory tests with controller in sapien. currently crashes after 2 sims
-
