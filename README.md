@@ -29,7 +29,7 @@ export PYTHONPATH=$PYTHONPATH:~/HamiltonianODEPointClouds/
 Another path that we need to add is the ```lib``` folder of the conda environment we are using to ```LD_LIBRARY_PATH```
 for using ```open3d``` for point cloud related processing. This can be done as follows:
 ```commandline
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:~/anaconda3/envs/icra/lib
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:~/anaconda3/envs/hamnode/lib
 ```
 
 ## Collecting the point cloud dataset
