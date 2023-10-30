@@ -7,7 +7,7 @@ For more details , please visit our project website: https://altwaitan.github.io
 ## Setup
 First of all, clone the repository:
 ```commandline
-git clone https://github.com/SambaranRepo/Hamiltonian-Neural-ODE-PointClouds.git
+git clone https://github.com/ExistentialRobotics/Differential-Drive-Hamiltonian-NeuralODE.git
 ```
 To replicate results of the paper, we first need to setup a conda environment which can be set up by first installing Anaconda from https://www.anaconda.com/download and then installing the conda environment from the file provided as follows:
 
@@ -23,7 +23,7 @@ conda activate hamnode
 
 Add the root repository path to the ```PYTHONPATH``` environment variable as follows:
 ```commandline
-export PYTHONPATH=$PYTHONPATH:~/HamiltonianODEPointClouds/
+export PYTHONPATH=$PYTHONPATH:~/Differential-Drive-Hamiltonian-NeuralODE/
 ```
 
 Another path that we need to add is the ```lib``` folder of the conda environment we are using to ```LD_LIBRARY_PATH```
@@ -36,6 +36,7 @@ export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:~/anaconda3/envs/hamnode/lib
 We use a simulator called SAPIEN(https://sapien.ucsd.edu/) to create a simulation environment of our differential drive robot in a suitable environment allowing us to save point cloud observations from a simulated camera on top of the robot.
 To run the simulator and collect point cloud data, run the following script:
 ```commandline
+mkdir -p ModelTraining/jackal/data/PointClouds  # Point clouds from sim are saved here
 cd JackalSim
 python3 jackal_collect_pointcloud.py
 ```
@@ -83,17 +84,17 @@ You can provide different starting poses for the robot by changing the ```x_star
 ## Results
 The performance of the controller from learned model is attached below: 
 
-
+### Pose stabilization plots
 <p align='center'>
 <img src="./plots/pose_stabilization.png">
 </p>
 
-
+### Example 1 : Pose stabilization from x=6, y=-6, yaw=-1.571rad to x=0, y=0, yaw=0
 <p align='center'>
 <img src="./gif/x=6.000 y=-6.000 theta=-1.571.gif">
 </p>
 
-
+### Example 2 : Pose stabilization from x=-5, y=5, yaw=-0.785rad to x=0, y=0, yaw=0
 <p align='center'>
 <img src="./gif/x=-5.000 y=5.000 theta=-0.785.gif">
 </p>
